@@ -32,6 +32,21 @@ python3 deploy.py
 ```
 
 **Précision :** les fichiers du kit sont copiés directement dans le dossier courant, sans créer de sous-dossier. Aucun fichier ne doit déjà porter le même nom : le dossier doit donc être vide.
+
+## Desinstallation
+
+**Windows (CMD) :**
+
+```cmd
+rmdir /S /Q web_deploy 2>nul & del /Q deploy.py web_deploy_config.json 2>nul & rmdir /S /Q .venv 2>nul
+```
+
+**Linux (Terminal) :**
+
+```bash
+rm -rf web_deploy deploy.py web_deploy_config.json .venv
+```
+
 ## Exemple
 
 Si votre projet contient :
