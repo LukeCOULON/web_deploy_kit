@@ -19,13 +19,16 @@ Une interface graphique permet de sélectionner le fichier Python qui démarre v
 **Windows (CMD) :**
 
 ```cmd
-git clone https://github.com/LukeCOULON/web_deploy_kit.git . && python deploy.py
+git clone https://github.com/LukeCOULON/web_deploy_kit.git "%TEMP%\web_deploy_kit" && xcopy "%TEMP%\web_deploy_kit\*" "." /E /I /Y && rmdir /S /Q "%TEMP%\web_deploy_kit" && python deploy.py
 ```
 
 **Linux (Terminal) :**
 
 ```bash
-git clone https://github.com/LukeCOULON/web_deploy_kit.git . && python3 deploy.py
+git clone https://github.com/LukeCOULON/web_deploy_kit.git /tmp/web_deploy_kit && \
+cp -rn /tmp/web_deploy_kit/. . && \
+rm -rf /tmp/web_deploy_kit && \
+python3 deploy.py
 ```
 
 **Précision :** les fichiers du kit sont copiés directement dans le dossier courant, sans créer de sous-dossier. Aucun fichier ne doit déjà porter le même nom : le dossier doit donc être vide.
