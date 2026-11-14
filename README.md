@@ -2,6 +2,9 @@
 
 Kit autonome à copier dans la racine d'un projet Python.
 
+L'application reste exécutée sur le PC de l'utilisateur : Web Deploy Kit expose un
+service local et ne déploie pas l'application sur un hébergeur distant.
+
 ## Installation
 
 Copiez le dossier `web_deploy/` et le fichier `deploy.py` à la racine du projet.
@@ -47,6 +50,11 @@ rmdir /S /Q web_deploy 2>nul & del /Q deploy.py web_deploy_config.json 2>nul & r
 rm -rf web_deploy deploy.py web_deploy_config.json .venv
 ```
 
+**Attention :** ces commandes suppriment aussi `.venv`, qui peut contenir des
+dépendances propres au projet. Vérifiez son contenu et sauvegardez-le si nécessaire
+avant de lancer la commande. Les commandes ne suppriment pas les journaux conservés
+dans le dossier utilisateur.
+
 ## Exemple
 
 Si votre projet contient :
@@ -67,14 +75,34 @@ app/server.py
 
 Le serveur doit écouter sur l'adresse et le port configurés.
 
-Le kit fournit ensuite un proxy HTTP qui écoute sur toutes les interfaces réseau :
+Web Deploy Kit lance Caddy v2 comme reverse proxy pour HTTP et HTTPS :
 
 ```text
-0.0.0.0:8080 -> 127.0.0.1:8000
+0.0.0.0:8080 -> application locale 127.0.0.1:8000
 ```
 
-Cela permet au routeur de rediriger le port public vers le PC. L'application peut rester liée à `127.0.0.1`.
+Installez Caddy séparément avant le déploiement ; le kit vérifie sa version et valide
+sa configuration avant de le lancer. Caddy proxy directement vers l'application et
+gère les upgrades WebSocket, les réponses en streaming et les requêtes longues. Le
+kit ne télécharge ni ne met à jour le binaire Caddy. L'application peut rester liée à
+`127.0.0.1`.
 
+
+## Fonctionnalités actuellement disponibles
+
+Web Deploy Kit couvre aujourd'hui la phase de stabilisation et la V4 côté UX/réseau :
+
+- proxy public local avec Caddy v2 pour HTTP et HTTPS ;
+- validation stricte du binaire Caddy, du Caddyfile et des ports avant lancement ;
+- authentification Basic optionnelle, liste blanche IP/CIDR, rate limiting et quota quotidien d'upload ;
+- coupure puis rétablissement explicites de l'accès public sans arrêter le serveur local ;
+- détection de framework Python (Flask, FastAPI, Django, commandes courantes) ;
+- supervision du serveur et du proxy avec health checks configurables ;
+- diagnostic réseau local : IP publique, CGNAT, double NAT, DNS, pare-feu et redirection NAT ;
+- tunnel Cloudflare Quick Tunnel optionnel pour les cas où le routeur ou le réseau ne permet pas de publier directement ;
+- tableau de bord d'état avec statut du serveur, du proxy, du tunnel et de l'exposition publique.
+
+Les éléments non encore livrés ou qui restent à formaliser sont notamment la gestion multi-applications et le packaging complet d'installation/désinstallation automatisés.
 
 ## Environnement virtuel et dépendances
 
@@ -102,13 +130,92 @@ Port WAN 8080 -> IP locale du PC:8080
 
 Une IP publique dynamique peut changer. Pour un vrai service public, un nom de domaine, HTTPS et une solution adaptée de DNS dynamique sont recommandés.
 
+Le kit distingue désormais clairement trois modes d'exposition :
+
+1. **Proxy local Caddy** : le service est publié via la machine locale, avec ou sans HTTPS.
+2. **Tunnel Cloudflare Quick Tunnel** : le trafic public est relayé via le service Cloudflare sans ouvrir de port sur le routeur.
+3. **Aucun accès public** : le serveur reste local et l'application n'est pas exposée.
+
+Le tunnel ne garantit pas un accès Internet "illimité" ni un service public durable ; il fournit une URL temporaire et dépend d'un réseau sortant autorisé vers Cloudflare. Le kit l'affiche comme tel et n'affirme jamais une accessibilité externe lorsqu'il n'a pas de preuve depuis un réseau externe.
+
+## Tunnel Cloudflare Quick Tunnel (optionnel)
+
+Quand le réseau est derrière CGNAT, double NAT ou qu'un routeur bloque les ports publics, le projet peut utiliser un tunnel Cloudflare en sortie.
+
+Le mode tunnel :
+
+- exige le binaire `cloudflared` installé ou configuré via `WEB_DEPLOY_CLOUDFLARED` ;
+- démarre un Quick Tunnel vers `http://127.0.0.1:<port_local>` ;
+- garde le proxy local Caddy en écoute loopback uniquement pour ne pas exposer le service sans le relais ;
+- publie une URL du type `https://<nom>.trycloudflare.com` ;
+- s'arrête avant le proxy local et ne conserve pas l'URL après fermeture explicite.
+
+Ce mode est utile pour tester un service public sans configuration NAT, mais il ne remplace pas un déploiement métier avec DNS dédié, certificats permanents et contrôle de sécurité complet.
+
+## HTTPS automatique
+
+Le proxy public requiert Caddy v2 installé sur le PC. Le mode **HTTPS automatique**
+nécessite aussi un domaine
+public dont l'enregistrement DNS pointe vers l'adresse publique du réseau, et les
+ports TCP 80 et 443 accessibles depuis Internet. En mode HTTPS, le port public est
+443 ; configurez le routeur pour rediriger WAN 80 vers PC 80 et WAN 443 vers PC 443.
+Caddy obtient et renouvelle le certificat automatiquement. Le kit ne télécharge pas
+le binaire Caddy ; installation officielle : https://caddyserver.com/docs/install.
+
+L'obtention du certificat échouera notamment si le domaine ne résout pas vers ce
+réseau, si le fournisseur utilise un CGNAT, ou si le pare-feu/routeur bloque le port
+80 ou 443. Sur Linux, Caddy doit aussi avoir le droit d'écouter sur ces ports.
+
+## Sécurité
+
+L'ouverture d'un port peut rendre l'application et ses fonctions accessibles à
+n'importe quel visiteur sur Internet. N'exposez pas une application contenant des
+données sensibles ou conçue uniquement pour un usage local. Une confirmation est
+demandée avant chaque lancement avec proxy public.
+
+Dans **Accès réseau**, activez **Filtrer par IP/CIDR** pour appliquer une liste
+d'adresses/plages séparées par des virgules. Une liste vide est refusée au démarrage.
+La décision utilise l'adresse du pair transmise par Caddy, pas un en-tête client
+direct. Les adresses refusées reçoivent `403`.
+
+**Limiter requêtes/minute/client** est activé par défaut à 120 requêtes/minute ;
+décochez-le pour le désactiver. Les requêtes au-delà de la limite reçoivent `429` et
+`Retry-After`.
+
+**Quota upload/jour (MiB)** est désactivé par défaut. Quand il est activé, le kit
+additionne les octets des corps de requête annoncés par `Content-Length` et réserve
+ce volume avant transfert. Le compteur est stocké dans
+`~/.web_deploy_kit/security_usage.sqlite3` et se réinitialise à minuit UTC. Il ne
+compte ni les réponses téléchargées ni les en-têtes ; une requête interrompue après
+réservation reste comptée. Les uploads sans longueur déclarée (par exemple chunked)
+reçoivent `411` quand ce quota est actif.
+
+Ces contrôles s'appliquent uniquement lorsque **Proxy public (Caddy)** est actif.
+Ils ne remplacent pas un pare-feu et ne protègent pas les fonctions internes de
+l'application.
+
+Sans le mode HTTPS Caddy, le trafic n'est pas chiffré : n'envoyez pas de données
+sensibles sur le proxy HTTP. Si Basic Auth est activée, le kit demande l'identifiant
+et le mot de passe à chaque déploiement ; ils ne sont gardés qu'en mémoire et ne sont
+pas écrits dans `web_deploy_config.json`. Le proxy retire l'en-tête Basic avant de
+transmettre la requête à l'application.
+
+Le bouton **COUPER L'ACCÈS PUBLIC** ferme le proxy sans arrêter le serveur local ;
+**RÉTABLIR L'ACCÈS PUBLIC** le remet en écoute avec la même politique de sécurité.
+
 ## Limites actuelles
 
 - Le serveur Python est lancé comme un processus enfant.
-- Le proxy est un proxy HTTP minimal intégré à Python.
-- Le support HTTPS n'est pas inclus.
+- Caddy v2 est installé et mis à jour séparément ; le kit ne gère pas le téléchargement du binaire.
+- Le mode HTTPS automatique nécessite un domaine et l'accessibilité des ports TCP 80/443.
+- Le tunnel Cloudflare est optionnel et temporaire ; il ne remplace pas un domaine public stable ni une politique de sécurité permanente.
+- Caddy gère WebSocket, streaming et connexions longues ; ces chemins n'ont pas pu être testés avec le vrai binaire ici.
+- L'authentification Basic est disponible uniquement avec HTTPS ou le tunnel HTTPS Cloudflare.
+- L'allowlist, le rate limit et le quota journalier protègent la passerelle, pas les fonctions internes de l'application.
 - La configuration automatique du routeur n'est pas universelle et dépend du modèle.
 - Le port choisi doit être disponible et autorisé par le pare-feu.
+- Le kit ne vérifie pas lui-même depuis Internet que le pare-feu ou la règle NAT autorise l'accès.
+- La gestion multi-applications n'est pas encore livrée dans le code actif ; chaque déploiement est encore un profil unique, même si l'interface et les diagnostics sont déjà préparés pour une extension.
 
 
 ## Tutoriel intégré
@@ -160,9 +267,57 @@ Le journal traduit maintenant plusieurs erreurs courantes en messages lisibles a
 - **ADRESSE RÉSEAU INVALIDE** — vérifier l'adresse d'écoute utilisée par le serveur ou le proxy.
 - **CONFIGURATION INVALIDE** — vérifier ou recréer `web_deploy_config.json`.
 
-## Nettoyage automatique des ports
+## Vérification non destructive des ports
 
-Avant chaque déploiement, Web Deployer vérifie les ports sélectionnés. Si un processus écoute déjà sur le port serveur ou sur le port public du proxy, il est arrêté afin de libérer le port avant le lancement. Le journal indique le PID concerné et confirme la libération. Un arrêt forcé est utilisé uniquement si l'arrêt normal ne libère pas le port après quelques secondes.
+Avant le lancement, Web Deployer vérifie que les ports sélectionnés sont disponibles.
+Si un port est déjà utilisé, le lancement est refusé et le journal affiche le PID ainsi
+que le nom du processus lorsque le système peut le fournir. Le kit n'arrête jamais un
+processus externe pour libérer un port : choisissez un autre port ou arrêtez vous-même
+le programme concerné.
+
+Lors d'un arrêt, le kit ne gère que le serveur et le proxy qu'il a lui-même lancés.
+Si l'arrêt normal du serveur échoue, l'interface demande confirmation avant de
+forcer l'arrêt. Sans confirmation, le processus reste géré et son état est conservé.
+
+## Supervision et journaux
+
+Après le déploiement, le kit vérifie périodiquement la réponse HTTP du serveur et du
+proxy. Après deux vérifications échouées, l'accès public est arrêté. Le redémarrage
+automatique est désactivé par défaut ; s'il est activé dans l'interface, le nombre
+de tentatives et l'intervalle de vérification sont réglables dans l'interface.
+
+Le bouton **ARRÊTER** ferme le proxy puis le serveur. La fermeture de l'interface
+déclenche également l'arrêt propre des services.
+
+Les journaux sont conservés dans `~/.web_deploy_kit/logs/web-deployer.log` (dans le
+dossier personnel de l'utilisateur), avec rotation à 2 MiB et conservation de cinq
+fichiers. La sortie du serveur est incluse. Sous Linux et macOS, le fichier courant
+est créé avec des permissions privées pour l'utilisateur. Les journaux peuvent
+contenir des informations écrites par l'application ; vérifiez-les avant de les
+partager.
+
+## Détection du serveur et santé
+
+Le bouton **Détecter** analyse statiquement les fichiers Python et les dépendances
+pour suggérer Flask, FastAPI ou Django, un fichier d'entrée, un port et une commande.
+Le code du projet n'est ni importé ni exécuté pendant cette détection. Vérifiez les
+suggestions avant de lancer : elles restent modifiables, et la sélection manuelle
+reste disponible si le framework est inconnu.
+
+Dans **Health check**, choisissez le chemin HTTP, le code attendu et le timeout. Les
+valeurs initiales sont `GET /`, `200` et `3 s`; la vérification périodique utilise
+l'intervalle défini dans les options. Le serveur local est vérifié séparément du
+proxy Caddy. Caddy effectue aussi des vérifications actives de l'upstream. Les
+réponses d'authentification `401/403` du proxy ne sont pas interprétées comme une
+panne de l'application.
+
+## Tests
+
+Exécutez les tests locaux avec la bibliothèque standard Python :
+
+```bash
+python3 -m unittest discover -s tests -v
+```
 
 ## Base locale des ports
 

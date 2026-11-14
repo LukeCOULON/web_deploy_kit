@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 
@@ -14,14 +15,28 @@ class ServerLauncher:
     configuration de Web Deployer.
     """
 
-    def __init__(self, script, host, port, log=print, python_executable=None):
+    def __init__(
+        self,
+        script,
+        host,
+        port,
+        log=print,
+        python_executable=None,
+        module=None,
+        arguments=(),
+        working_directory=None,
+    ):
         self.script = script
         self.host = host
         self.port = int(port)
         self.log = log
         self.process = None
         self.python_executable = python_executable or sys.executable
+        self.module = module
+        self.arguments = tuple(str(argument) for argument in arguments)
+        self.working_directory = Path(working_directory).resolve() if working_directory else None
         self._shim_dir = None
+        self._output_thread = None
 
     def _create_port_shim(self):
         shim_dir = Path(tempfile.mkdtemp(prefix="web_deployer_shim_"))
@@ -37,6 +52,10 @@ class ServerLauncher:
         if self.process and self.process.poll() is None:
             self.log("[INFO] Le serveur est déjà lancé.")
             return
+
+        script_path = Path(self.script).resolve()
+        if not script_path.is_file():
+            raise FileNotFoundError(f"Script serveur introuvable : {script_path}")
 
         env = os.environ.copy()
         env["HOST"] = self.host
@@ -56,12 +75,8 @@ class ServerLauncher:
         self.log(f"[INFO] Python utilisé : {self.python_executable}")
         self.log(f"[INFO] Port serveur imposé par Web Deployer : {self.host}:{self.port}")
 
-        script_path = Path(self.script).resolve()
-        if not script_path.is_file():
-            raise FileNotFoundError(f"Script serveur introuvable : {script_path}")
-
         kwargs = dict(
-            cwd=str(script_path.parent),
+            cwd=str(self.working_directory or script_path.parent),
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -73,34 +88,61 @@ class ServerLauncher:
         else:
             kwargs["start_new_session"] = True
 
-        self.process = subprocess.Popen(
-            [self.python_executable, str(script_path)],
-            **kwargs,
+        try:
+            arguments = [
+                argument.replace("{host}", self.host).replace("{port}", str(self.port))
+                for argument in self.arguments
+            ]
+            command = [self.python_executable]
+            if self.module:
+                command.extend(("-m", self.module))
+            else:
+                command.append(str(script_path))
+            command.extend(arguments)
+            self.process = subprocess.Popen(
+                command,
+                **kwargs,
+            )
+        except Exception:
+            self._cleanup_shim()
+            raise
+
+        self._output_thread = threading.Thread(
+            target=self._read_output,
+            args=(self.process,),
+            daemon=True,
+            name="web-deployer-server-output",
         )
+        self._output_thread.start()
 
-        import threading
-        threading.Thread(target=self._read_output, daemon=True).start()
-
-    def _read_output(self):
-        if not self.process or not self.process.stdout:
+    def _read_output(self, process):
+        if not process or not process.stdout:
             return
-        for line in self.process.stdout:
+        for line in process.stdout:
             self.log("[APP] " + line.rstrip())
 
+    def _cleanup_shim(self):
+        if self._shim_dir:
+            import shutil
+            shutil.rmtree(self._shim_dir, ignore_errors=True)
+            self._shim_dir = None
 
-    def stop(self, timeout=4):
+    def stop(self, timeout=4, force=False):
         process = self.process
-        if not process or process.poll() is not None:
-            return
-        try:
+        if process and process.poll() is None:
             process.terminate()
-            process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=2)
-        finally:
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                if not force:
+                    raise
+                process.kill()
+                process.wait(timeout=2)
+
+        if process is None or process.poll() is not None:
             self.process = None
-            if self._shim_dir:
-                import shutil
-                shutil.rmtree(self._shim_dir, ignore_errors=True)
-                self._shim_dir = None
+            output_thread = self._output_thread
+            self._output_thread = None
+            if output_thread and output_thread is not threading.current_thread():
+                output_thread.join(timeout=1)
+            self._cleanup_shim()

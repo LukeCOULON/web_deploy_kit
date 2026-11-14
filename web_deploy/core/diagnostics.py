@@ -72,6 +72,11 @@ def log_firewall_advice(log, public_port):
     Ces commandes sont volontairement proposées mais jamais exécutées automatiquement.
     """
     public_port = int(public_port)
+    log(
+        "[INFO] Le kit teste l'accès TCP/HTTP local, mais ne peut pas confirmer "
+        "depuis ce PC si le pare-feu autorise les connexions externes."
+    )
+    log("[INFO] Les commandes ci-dessous sont des conseils ; aucune règle ne sera modifiée par le kit.")
     log("[CONSEIL RÉSEAU] Le serveur local fonctionne, mais l'accès public peut être bloqué par le pare-feu du PC.")
     if __import__("os").name == "nt":
         log(f"[WINDOWS] PowerShell (administrateur) : New-NetFirewallRule -DisplayName \"Web Deployer {public_port}\" -Direction Inbound -Protocol TCP -LocalPort {public_port} -Action Allow")

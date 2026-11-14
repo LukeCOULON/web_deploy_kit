@@ -1,10 +1,9 @@
 """Libération contrôlée des ports sélectionnés avant un déploiement."""
+import csv
 import os
 import re
-import signal
 import socket
 import subprocess
-import time
 
 
 def _pids_with_lsof(port):
@@ -97,6 +96,33 @@ def find_port_pids(port):
     return []
 
 
+def _process_name(pid):
+    if os.name == "nt":
+        command = ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"]
+    else:
+        command = ["ps", "-p", str(pid), "-o", "comm="]
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    if os.name == "nt":
+        rows = list(csv.reader(result.stdout.splitlines()))
+        if rows and len(rows[0]) > 1 and rows[0][1].isdigit():
+            return rows[0][0]
+        return None
+    name = result.stdout.strip()
+    return name or None
+
+
 def port_is_free(host, port):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -109,46 +135,27 @@ def port_is_free(host, port):
 
 
 def clear_port(port, log=print, label="port"):
-    """Arrête les processus qui écoutent sur *port* puis vérifie sa disponibilité."""
+    """Vérifie *port* sans arrêter de processus qui n'appartient pas au kit."""
     port = int(port)
     pids = find_port_pids(port)
-    if not pids:
-        log(f"[OK] Port {port} ({label}) déjà libre.")
-        return True
-
-    log(f"[INFO] Nettoyage du port {port} ({label}) : processus détecté(s) {', '.join(map(str, pids))}.")
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-            log(f"[INFO] Arrêt du processus {pid} demandé.")
-        except ProcessLookupError:
-            pass
-        except PermissionError as exc:
-            log(f"[ERREUR] Impossible d'arrêter le processus {pid} : {exc}")
-            return False
-
-    deadline = time.time() + 3
-    while time.time() < deadline:
-        if not find_port_pids(port):
-            log(f"[OK] Port {port} libéré.")
-            return True
-        time.sleep(0.15)
-
-    # Dernier recours : SIGKILL sous Unix / taskkill forcé sous Windows.
-    remaining = find_port_pids(port)
-    for pid in remaining:
-        try:
-            if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(pid), "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            else:
-                os.kill(pid, signal.SIGKILL)
-            log(f"[WARN] Processus {pid} forcé à s'arrêter.")
-        except (ProcessLookupError, PermissionError):
-            pass
-
-    time.sleep(0.2)
-    if find_port_pids(port):
-        log(f"[ERREUR] Le port {port} ({label}) reste occupé.")
+    if pids:
+        descriptions = []
+        for pid in pids:
+            name = _process_name(pid)
+            descriptions.append(f"{pid} ({name})" if name else str(pid))
+        pid_list = ", ".join(descriptions)
+        log(
+            f"[ERREUR] Port {port} ({label}) déjà utilisé par le(s) PID {pid_list}. "
+            "Aucun processus externe n'a été arrêté ; choisis un autre port."
+        )
         return False
-    log(f"[OK] Port {port} libéré après arrêt forcé.")
+
+    if not port_is_free("0.0.0.0", port):
+        log(
+            f"[ERREUR] Port {port} ({label}) indisponible, mais le processus n'a pas pu être identifié. "
+            "Aucun processus n'a été arrêté ; choisis un autre port."
+        )
+        return False
+
+    log(f"[OK] Port {port} ({label}) libre.")
     return True

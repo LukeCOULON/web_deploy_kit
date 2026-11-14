@@ -1,7 +1,7 @@
+import http.client
 import socket
+import ssl
 import time
-import urllib.error
-import urllib.request
 
 
 def wait_for_http(host, port, timeout=10):
@@ -25,26 +25,47 @@ def check_tcp_listener(host, port, timeout=2):
         return False, exc
 
 
-def http_question_response(host, port, path="/", timeout=4):
+def http_question_response(
+    host,
+    port,
+    path="/",
+    timeout=4,
+    expected_status=None,
+    https=False,
+    server_hostname=None,
+):
     """Envoie une vraie requête HTTP et retourne (ok, status, raison)."""
     port = int(port)
     if not (1 <= port <= 65535):
         return False, None, "port invalide"
     if not path.startswith("/"):
         path = "/" + path
-    url = f"http://{host}:{port}{path}"
+    connection = None
     try:
-        request = urllib.request.Request(
-            url,
-            method="GET",
-            headers={"User-Agent": "Web-Deployer-Kit/1.0"},
-        )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            response.read(64)
-            status = response.getcode()
-            return 200 <= status < 500, status, response.reason or "OK"
-    except urllib.error.HTTPError as exc:
-        # Une réponse HTTP 4xx prouve que le serveur répond : le transport fonctionne.
-        return True, exc.code, exc.reason or "HTTP error"
-    except Exception as exc:
+        if https:
+            connection = http.client.HTTPSConnection(
+                host,
+                port,
+                timeout=timeout,
+                context=ssl.create_default_context(),
+                server_hostname=server_hostname,
+            )
+        else:
+            connection = http.client.HTTPConnection(host, port, timeout=timeout)
+        headers = {"User-Agent": "Web-Deployer-Kit/1.0"}
+        if server_hostname:
+            headers["Host"] = server_hostname
+        connection.request("GET", path, headers=headers)
+        response = connection.getresponse()
+        response.read(64)
+        status = response.status
+        reason = response.reason or "OK"
+        if expected_status is not None:
+            expected_status = int(expected_status)
+            return status == expected_status, status, reason
+        return 200 <= status < 500, status, reason
+    except (OSError, http.client.HTTPException, ValueError) as exc:
         return False, None, str(exc)
+    finally:
+        if connection is not None:
+            connection.close()
