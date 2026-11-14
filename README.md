@@ -14,6 +14,21 @@ python deploy.py
 
 Une interface graphique permet de sélectionner le fichier Python qui démarre votre serveur.
 
+## Installation automatique via git
+
+**Windows (CMD) :**
+
+```cmd
+git clone https://github.com/LukeCOULON/web_deploy_kit.git . && python deploy.py
+```
+
+**Linux (Terminal) :**
+
+```bash
+git clone https://github.com/LukeCOULON/web_deploy_kit.git . && python3 deploy.py
+```
+
+**Précision :** les fichiers du kit sont copiés directement dans le dossier courant, sans créer de sous-dossier. Aucun fichier ne doit déjà porter le même nom : le dossier doit donc être vide.
 ## Exemple
 
 Si votre projet contient :
