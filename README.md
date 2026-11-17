@@ -15,7 +15,16 @@ Lancez :
 python deploy.py
 ```
 
-Une interface graphique permet de sélectionner le fichier Python qui démarre votre serveur.
+Au lancement, choisissez entre la version simple et la version avancée. Chaque interface
+permet de sélectionner le fichier Python qui démarre votre serveur. La version simple
+regroupe les réglages essentiels du serveur, des ports, du proxy et du venv. La version
+avancée ajoute notamment HTTPS, le tunnel Cloudflare, les contrôles d'accès et les
+diagnostics réseau.
+
+Dans la version avancée, vous pouvez décocher **Proxy public (Caddy)** pour lancer
+l'application en local uniquement. Une fois le serveur démarré, le bouton **ACTIVER LE
+PROXY PUBLIC** permet d'ouvrir Caddy sans arrêter le serveur ; le kit demande alors une
+confirmation avant d'exposer l'application.
 
 ## Installation automatique via git
 
@@ -171,7 +180,8 @@ réseau, si le fournisseur utilise un CGNAT, ou si le pare-feu/routeur bloque le
 L'ouverture d'un port peut rendre l'application et ses fonctions accessibles à
 n'importe quel visiteur sur Internet. N'exposez pas une application contenant des
 données sensibles ou conçue uniquement pour un usage local. Une confirmation est
-demandée avant chaque lancement avec proxy public.
+demandée avant un déploiement avec le proxy actif et avant l'activation du proxy après
+un déploiement local.
 
 Dans **Accès réseau**, activez **Filtrer par IP/CIDR** pour appliquer une liste
 d'adresses/plages séparées par des virgules. Une liste vide est refusée au démarrage.
@@ -200,8 +210,10 @@ et le mot de passe à chaque déploiement ; ils ne sont gardés qu'en mémoire e
 pas écrits dans `web_deploy_config.json`. Le proxy retire l'en-tête Basic avant de
 transmettre la requête à l'application.
 
-Le bouton **COUPER L'ACCÈS PUBLIC** ferme le proxy sans arrêter le serveur local ;
-**RÉTABLIR L'ACCÈS PUBLIC** le remet en écoute avec la même politique de sécurité.
+Le bouton d'accès public permet de couper Caddy sans arrêter le serveur, puis de le
+rétablir avec la même politique de sécurité. Si Caddy était désactivé au déploiement,
+le bouton affiche **ACTIVER LE PROXY PUBLIC** ; après activation, il devient
+**COUPER L'ACCÈS PUBLIC** puis **RÉTABLIR L'ACCÈS PUBLIC** selon son état.
 
 ## Limites actuelles
 
@@ -220,7 +232,9 @@ Le bouton **COUPER L'ACCÈS PUBLIC** ferme le proxy sans arrêter le serveur loc
 
 ## Tutoriel intégré
 
-Au démarrage, Web Deployer affiche maintenant un guide avant le menu de configuration.
+Après le choix de la version, l'interface affiche son guide avant la configuration. Les
+guides expliquent la préparation de la redirection de ports sur le routeur ; le guide de
+la version avancée couvre aussi les vérifications réseau avant le lancement.
 
 Le guide indique :
 

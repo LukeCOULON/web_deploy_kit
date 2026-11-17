@@ -1015,11 +1015,16 @@ class ConfigUI:
         self.stop_button.configure(state="normal" if self._services_active else "disabled")
         public_active = bool(self.deployer and self.deployer.proxy is not None)
         self.public_access_button.configure(
-            text="COUPER L'ACCÈS PUBLIC" if public_active else "RÉTABLIR L'ACCÈS PUBLIC",
+            text=(
+                "COUPER L'ACCÈS PUBLIC"
+                if public_active
+                else "ACTIVER LE PROXY PUBLIC"
+                if not self.proxy_enabled.get()
+                else "RÉTABLIR L'ACCÈS PUBLIC"
+            ),
             state=(
                 "normal"
                 if self._services_active
-                and self.proxy_enabled.get()
                 and not self._public_access_operation
                 else "disabled"
             ),
@@ -1028,6 +1033,18 @@ class ConfigUI:
     def _toggle_public_access(self):
         if not self._services_active or self._public_access_operation:
             return
+        if (
+            self.deployer
+            and self.deployer.proxy is None
+            and not self.deployer.config.get("proxy_enabled", True)
+        ):
+            warning = (
+                "Caddy va ouvrir le proxy public sur le port configuré. "
+                "En HTTP, le trafic ne sera pas chiffré. Toute personne pouvant joindre "
+                "ce port pourra accéder à l'application. Continuer ?"
+            )
+            if not messagebox.askyesno("Confirmer l'exposition publique", warning):
+                return
         if self.tunnel_enabled.get() and self.deployer and self.deployer.proxy is None:
             if not messagebox.askyesno(
                 "Activer le tunnel public",
@@ -1041,7 +1058,19 @@ class ConfigUI:
     def _toggle_public_access_worker(self):
         try:
             if self.deployer.proxy is None:
-                self.deployer.start_public_access()
+                enabling_proxy = not self.deployer.config.get("proxy_enabled", True)
+                if enabling_proxy:
+                    self.deployer.config["proxy_enabled"] = True
+                try:
+                    if enabling_proxy:
+                        self.deployer.validate()
+                    self.deployer.start_public_access()
+                except Exception:
+                    if enabling_proxy:
+                        self.deployer.config["proxy_enabled"] = False
+                    raise
+                if enabling_proxy:
+                    self.root.after(0, self._sync_proxy_enabled)
                 status = "Accès public rétabli."
             else:
                 if not self.deployer.stop_public_access():
@@ -1061,6 +1090,10 @@ class ConfigUI:
             return
         self.root.after(0, lambda: self.status.set(status))
         self.root.after(0, self._update_deployment_buttons)
+
+    def _sync_proxy_enabled(self):
+        self.proxy_enabled.set(True)
+        self._update_security_controls()
 
     def _stop_deployment(self):
         if not self._services_active or self._deployment_in_progress:
